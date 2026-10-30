@@ -81,7 +81,38 @@ Mailchimp OAuth token would complete the hijack.
 Add `check_ajax_referer()`/nonce verification to every AJAX handler in
 this class, especially the OAuth and account-mutation ones.
 
+## Broadened impact (added 30 Oct 2026, after Patchstack rejection)
+Patchstack rejected this on 30 Oct 2026: "Out of scope due to not meeting
+the bug bounty rules and scope" - the hijack was framed as just an
+options swap, which falls short of their "significant impact" bar for
+arbitrary settings change.
+
+Traced every use of the `mailchimp_api_key` option in the codebase - it
+is the SINGLE credential used by the plugin's entire sync pipeline, read
+in at least 8 separate call sites:
+`includes/processes/class-mailchimp-woocommerce-abstract-sync.php:442`,
+`class-mailchimp-woocommerce-single-product.php:202`,
+`class-mailchimp-woocommerce-single-product-variation.php:238`,
+`class-mailchimp-woocommerce-single-product-category.php:155`,
+`class-mailchimp-woocommerce-user-submit.php:149`, `bootstrap.php:848`,
+plus the admin UI reads. Every future WooCommerce order, product,
+customer record, and cart-abandonment event this store processes gets
+synced using whatever key is stored there. The CSRF hijack therefore
+doesn't just disconnect one setting - it silently redirects the site's
+entire ongoing customer-PII pipeline (name, email, address, purchase
+history, cart contents) to the attacker's own Mailchimp account,
+continuously, until an admin notices and manually reconnects. This is
+the real, significant impact: bulk, ongoing PII exfiltration of the
+store's full customer base, not a one-time metadata change.
+
 ## Disclosure plan
 SUBMITTED to Patchstack 30 Oct 2026, "Report created successfully." No
-scope warning shown on the form - CSRF type cleanly accepted. 200,000+
-installs. Awaiting triage.
+scope warning shown on the form - CSRF type cleanly accepted. **REJECTED
+same day**: "Out of scope due to not meeting the bug bounty rules and
+scope." Broadened the impact framing above (continuous bulk PII
+exfiltration via the sync pipeline, not just a connection-settings swap)
+but did not resubmit to Patchstack - re-submitting the same finding risks
+an instant duplicate/previously-rejected auto-reject without a fresh
+human review. Routed to MITRE CNA-LR instead for a direct CVE, with the
+broadened write-up published as the required public reference:
+https://github.com/yozturk0/mailchimp-for-woocommerce-csrf-oauth-hijack
