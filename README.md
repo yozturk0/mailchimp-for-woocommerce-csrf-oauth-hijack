@@ -81,7 +81,43 @@ Mailchimp OAuth token would complete the hijack.
 Add `check_ajax_referer()`/nonce verification to every AJAX handler in
 this class, especially the OAuth and account-mutation ones.
 
-## Broadened impact (added 30 Oct 2026, after Patchstack rejection)
+## Broadened impact, round 2 (added 30 Oct 2026, 6 independent checks)
+Re-verified every claim below 3 independent times against fresh code reads
+(function bodies, full-plugin nonce grep, GitHub reference reachability),
+then made 3 independent attempts to find a stronger scope-fit angle.
+
+**New finding (strongest angle):** `disconnect_store(false)` is called
+unconditionally as step 1 of every successful `oauth_finish()` CSRF hit
+(`admin/class-mailchimp-woocommerce-admin.php:1258`), before the attacker's
+key is even saved. It does two destructive things, both unconditional:
+1. `$mc->deleteStore( $store_id )` (`includes/api/class-mailchimp-api.php:1567-1569`)
+   sends `DELETE ecommerce/stores/$store_id` to Mailchimp's real API using
+   the site's OLD valid key - this deletes the entire Mailchimp ecommerce
+   store resource, meaning every order, product, and customer record this
+   site has ever synced to Mailchimp is permanently destroyed.
+2. `mailchimp_clean_database()` (`bootstrap.php:1853-1865`) deletes every
+   WordPress option matching `mailchimp%woocommerce%` - wiping all local
+   plugin configuration (list mappings, sync progress, tag settings).
+
+So one forged, unauthenticated CSRF request causes: (a) permanent deletion
+of all previously-synced ecommerce data on the real Mailchimp account, (b)
+full local config wipe, and (c) all future orders/customers/products/
+categories/coupons (5 sync processor subclasses extend
+`MailChimp_WooCommerce_Abstract_Sync`, all read `mailchimp_api_key`)
+redirected to the attacker's account. This is irreversible data
+destruction plus ongoing hijack, not a reversible settings tweak - a much
+cleaner fit for "arbitrary settings change ... significant impact on the
+site" than the PII-redirect framing alone.
+
+Checked a third angle (SSRF via the `data_center` fragment of the saved
+key controlling the outbound API hostname,
+`includes/api/class-mailchimp-api.php:3141`) and ruled it out honestly:
+the data_center value comes from Mailchimp's own `/api/finish` response
+for the attacker's real account (`str_getcsv` split on the stored key,
+`includes/api/class-mailchimp-api.php:95-104`), not raw attacker text, so
+it cannot be redirected to a non-Mailchimp host. Not claiming this angle.
+
+## Broadened impact, round 1 (added 30 Oct 2026, after Patchstack rejection)
 Patchstack rejected this on 30 Oct 2026: "Out of scope due to not meeting
 the bug bounty rules and scope" - the hijack was framed as just an
 options swap, which falls short of their "significant impact" bar for
