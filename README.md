@@ -141,14 +141,6 @@ continuously, until an admin notices and manually reconnects. This is
 the real, significant impact: bulk, ongoing PII exfiltration of the
 store's full customer base, not a one-time metadata change.
 
-## Disclosure plan
-SUBMITTED to Patchstack 30 Oct 2026, "Report created successfully." No
-scope warning shown on the form - CSRF type cleanly accepted. **REJECTED
-same day**: "Out of scope due to not meeting the bug bounty rules and
-scope." Broadened the impact framing above (continuous bulk PII
-exfiltration via the sync pipeline, not just a connection-settings swap)
-but did not resubmit to Patchstack - re-submitting the same finding risks
-an instant duplicate/previously-rejected auto-reject without a fresh
-human review. Routed to MITRE CNA-LR instead for a direct CVE, with the
-broadened write-up published as the required public reference:
-https://github.com/yozturk0/mailchimp-for-woocommerce-csrf-oauth-hijack
+## Status
+Reported to the vendor. CVE request filed with MITRE's CNA of Last Resort
+(CAN-2026-2041400, "CVE Request is Submitted"). Researcher: Yusuf Ozturk.
